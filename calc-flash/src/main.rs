@@ -81,20 +81,16 @@ impl Value {
                 if approx <= INLINE_LIMIT {
                     n.to_string()
                 } else {
-                    // GMP decimal conversion of millions of digits is still slow.
-                    // Show summary instead. Use :full or :save to get the full number.
-                    let s = n.to_string_radix(10);
-                    let actual = s.len();
-                    format!(
-                        "[{actual}-digit number: {}...{}]  (use :full or :save <file>)",
-                        &s[..12],
-                        &s[actual - 8..]
-                    )
+                    // Never call to_string_radix(10) here — O(n log n), costs seconds
+                    // for numbers with millions of digits. approx_digits() is O(1).
+                    format!("[~{approx}-digit integer]  (use :full or :save <file>)")
                 }
             }
         }
     }
 
+    // NOTE: to_string_radix(10) belongs here and in tests only.
+    // Never call it from display_string() or approx_digits().
     fn full_string(&self) -> String {
         match self {
             Value::Float(f) => format!("{f}"),
@@ -591,5 +587,17 @@ mod tests {
         let first = eval("56+2").unwrap();
         let expanded = format!("{}{}", first.display_string(), "+8");
         assert_eq!(eval(&expanded).unwrap().to_float(), 66.0);
+    }
+    #[test]
+    fn display_large_no_full_conversion() {
+        // (10!)! has ~22M digits; display_string must return in under 2 seconds
+        let v = eval("(10!)!").unwrap();
+        let start = std::time::Instant::now();
+        let s = v.display_string();
+        assert!(
+            start.elapsed().as_secs() < 2,
+            "display_string took too long: {:?}", start.elapsed()
+        );
+        assert!(s.contains("digit"), "expected digit-count summary, got: {s}");
     }
 }
