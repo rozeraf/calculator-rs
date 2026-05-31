@@ -1,10 +1,26 @@
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::OnceLock;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use rug::{Integer, ops::Pow};
 
 // --- Value ---
+
+static FACT_CACHE: OnceLock<Vec<Integer>> = OnceLock::new();
+
+fn fact_cache() -> &'static [Integer] {
+    FACT_CACHE.get_or_init(|| {
+        let mut v = Vec::with_capacity(1001);
+        v.push(Integer::from(1u32)); // 0!
+        for i in 1u64..=1000 {
+            let next = v.last().unwrap().clone() * Integer::from(i);
+            v.push(next);
+        }
+        v
+    })
+}
+
 
 #[derive(Clone, Debug)]
 enum Value {
@@ -301,7 +317,9 @@ fn factorial(v: Value) -> Result<Value, CalcError> {
     let f = v.to_float();
     if f < 0.0 || f.fract() != 0.0 { return Err(CalcError::FactorialDomain(f)); }
     let n = f as u64;
-    if n <= 1 { return Ok(Value::Int(Integer::from(1))); }
+    if n <= 1000 {
+        return Ok(Value::Int(fact_cache()[n as usize].clone()));
+    }
     Ok(Value::Int(prime_factorial(n)))
 }
 
@@ -533,5 +551,11 @@ mod tests {
     #[test] fn pow_too_large() {
         // exponent larger than u32::MAX must error, not hang
         assert!(eval("2^9999999999").is_err());
+    }
+    #[test] fn cached_factorial() {
+        // values from cache must match prime_factorial for boundary cases
+        let cached = eval("1000!").unwrap().full_string();
+        let direct = Value::Int(prime_factorial(1000)).full_string();
+        assert_eq!(cached, direct);
     }
 }
