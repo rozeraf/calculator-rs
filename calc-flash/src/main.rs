@@ -271,7 +271,10 @@ fn v_rem(a: Value, b: Value) -> Result<Value, CalcError> {
 fn v_pow(base: Value, exp: Value) -> Result<Value, CalcError> {
     if let (Some(b), Some(e)) = (base.to_integer(), exp.to_integer()) {
         if e >= 0 {
-            let e_u32 = u32::try_from(&e).unwrap_or(u32::MAX);
+            let e_u32 = match u32::try_from(&e) {
+                Ok(v) => v,
+                Err(_) => return Err(CalcError::ExponentTooLarge),
+            };
             return Ok(Value::Int(b.pow(e_u32)));
         }
     }
@@ -365,6 +368,7 @@ enum CalcError {
     TrailingChars(String),
     DivisionByZero,
     FactorialDomain(f64),
+    ExponentTooLarge,
 }
 
 impl fmt::Display for CalcError {
@@ -377,6 +381,7 @@ impl fmt::Display for CalcError {
             Self::TrailingChars(t)   => write!(f, "unexpected trailing token: {t}"),
             Self::DivisionByZero     => write!(f, "division by zero"),
             Self::FactorialDomain(x) => write!(f, "factorial requires non-negative integer, got {x}"),
+            Self::ExponentTooLarge   => write!(f, "exponent too large for integer power (max 2^32−1)"),
         }
     }
 }
@@ -525,4 +530,8 @@ mod tests {
     #[test] fn unary()    { assert_eq!(evalf("-5+3"), -2.0); assert_eq!(evalf("--5"), 5.0); }
     #[test] fn divzero()  { assert!(eval("1/0").is_err()); }
     #[test] fn fact_err() { assert!(eval("(-1)!").is_err()); assert!(eval("1.5!").is_err()); }
+    #[test] fn pow_too_large() {
+        // exponent larger than u32::MAX must error, not hang
+        assert!(eval("2^9999999999").is_err());
+    }
 }
