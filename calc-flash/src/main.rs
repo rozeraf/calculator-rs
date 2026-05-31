@@ -103,7 +103,8 @@ impl Value {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
-    Number(f64),
+    Integer(String),
+    Float(String),
     Plus, Minus, Star, Slash, Percent, Caret, Bang,
     LParen, RParen, Eof,
 }
@@ -122,16 +123,32 @@ impl Lexer {
     fn skip_ws(&mut self) {
         while matches!(self.peek(), Some(' ') | Some('\t')) { self.advance(); }
     }
-    fn read_number(&mut self) -> Result<f64, CalcError> {
+    fn read_number(&mut self) -> Result<Token, CalcError> {
         let start = self.pos;
-        while matches!(self.peek(), Some('0'..='9') | Some('.') | Some('e') | Some('E')) {
-            let c = self.advance().unwrap();
-            if (c == 'e' || c == 'E') && matches!(self.peek(), Some('+') | Some('-')) {
-                self.advance();
+        let mut is_float = false;
+        while let Some(c) = self.peek() {
+            match c {
+                '0'..='9' => { self.advance(); }
+                '.' => { is_float = true; self.advance(); }
+                'e' | 'E' => {
+                    is_float = true;
+                    self.advance();
+                    // consume optional sign after exponent marker
+                    if matches!(self.peek(), Some('+') | Some('-')) {
+                        self.advance();
+                    }
+                }
+                _ => break,
             }
         }
         let s: String = self.input[start..self.pos].iter().collect();
-        s.parse::<f64>().map_err(|_| CalcError::InvalidNumber(s))
+        if is_float {
+            // validate eagerly so the error message names the bad literal
+            s.parse::<f64>().map_err(|_| CalcError::InvalidNumber(s.clone()))?;
+            Ok(Token::Float(s))
+        } else {
+            Ok(Token::Integer(s))
+        }
     }
     fn tokenize(&mut self) -> Result<Vec<Token>, CalcError> {
         let mut tokens = Vec::new();
@@ -140,7 +157,7 @@ impl Lexer {
             match self.peek() {
                 None    => { tokens.push(Token::Eof); break; }
                 Some(c) => match c {
-                    '0'..='9' | '.' => tokens.push(Token::Number(self.read_number()?)),
+                    '0'..='9' | '.' => tokens.push(self.read_number()?),
                     '+' => { self.advance(); tokens.push(Token::Plus); }
                     '-' => { self.advance(); tokens.push(Token::Minus); }
                     '*' => { self.advance(); tokens.push(Token::Star); }
@@ -232,7 +249,21 @@ impl Parser {
     }
     fn parse_primary(&mut self) -> Result<Value, CalcError> {
         match self.peek().clone() {
-            Token::Number(n) => { self.advance(); Ok(Value::Float(n)) }
+            Token::Integer(s) => {
+                self.advance();
+                // Integer::parse is lossless for any number of digits
+                match Integer::parse(&s) {
+                    Ok(incomplete) => Ok(Value::Int(Integer::from(incomplete))),
+                    Err(_) => Err(CalcError::InvalidNumber(s)),
+                }
+            }
+            Token::Float(s) => {
+                self.advance();
+                match s.parse::<f64>() {
+                    Ok(f) => Ok(Value::Float(f)),
+                    Err(_) => Err(CalcError::InvalidNumber(s)),
+                }
+            }
             Token::LParen => {
                 self.advance();
                 let v = self.parse_expr()?;
@@ -600,4 +631,26 @@ mod tests {
         );
         assert!(s.contains("digit"), "expected digit-count summary, got: {s}");
     }
+    #[test]
+    fn bigint_literal_exact() {
+        // exceeds f64 precision — must round-trip without loss
+        let s = "123456789012345678901234567890";
+        let v = eval(s).unwrap();
+        assert_eq!(v.full_string(), s);
+    }
+
+    #[test]
+    fn bigint_arithmetic_exact() {
+        // 10^30 + 1 must not collapse to 10^30
+        let v = eval("1000000000000000000000000000000 + 1").unwrap();
+        assert_eq!(v.full_string(), "1000000000000000000000000000001");
+    }
+
+    #[test]
+    fn float_literal_still_works() {
+        assert!((eval("3.14").unwrap().to_float() - 3.14).abs() < 1e-10);
+        assert!((eval("1e10").unwrap().to_float() - 1e10).abs() < 1.0);
+        assert!((eval("2.5e-1").unwrap().to_float() - 0.25).abs() < 1e-15);
+    }
 }
+
