@@ -47,8 +47,9 @@ impl Value {
             Value::Float(_) => 20,
             Value::Int(n) => {
                 if *n == 0 { return 1; }
-                let bits = n.significant_bits() as f64;
-                (bits * std::f64::consts::LOG2_10.recip()).ceil() as usize
+                let bits = n.significant_bits() as u64;
+                // integer approximation of bits * log10(2), avoids float rounding
+                ((bits * 1233 + 4095) / 4096) as usize
             }
         }
     }
