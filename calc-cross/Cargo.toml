@@ -9,10 +9,9 @@ path = "src/main.rs"
 
 
 [dependencies]
-num-bigint = "0.4"
-num-traits  = "0.2"
-num-integer = "0.1"
+dashu = "0.4"
 rustyline    = "14"
+
 
 [profile.release]
 opt-level     = 3

@@ -2,16 +2,15 @@ use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
 use rustyline::{DefaultEditor, error::ReadlineError};
-use num_bigint::{BigInt, BigUint};
-use num_traits::{Zero, One, ToPrimitive, Signed, Pow};
-use num_integer::Integer as IntExt;
+use dashu::integer::{IBig, UBig};
+use dashu::base::{BitTest, DivRem};
 
 // --- Value ---
 
 #[derive(Clone, Debug)]
 enum Value {
     Float(f64),
-    Int(BigInt),
+    Int(IBig),
 }
 
 // Digits above which we don't inline-print but show summary instead.
@@ -21,15 +20,16 @@ impl Value {
     fn to_float(&self) -> f64 {
         match self {
             Value::Float(f) => *f,
-            Value::Int(n)   => n.to_f64().unwrap_or(f64::INFINITY),
+            Value::Int(n)   => n.to_f64().value(),
         }
     }
 
-    fn to_integer(&self) -> Option<BigInt> {
+
+    fn to_integer(&self) -> Option<IBig> {
         match self {
             Value::Int(n) => Some(n.clone()),
             Value::Float(f) if f.fract() == 0.0 && f.is_finite() && f.abs() < 9e18 => {
-                Some(BigInt::from(*f as i64))
+                Some(IBig::from(*f as i64))
             }
             _ => None,
         }
@@ -38,7 +38,7 @@ impl Value {
     fn is_zero(&self) -> bool {
         match self {
             Value::Float(f) => *f == 0.0,
-            Value::Int(n)   => n.is_zero(),
+            Value::Int(n)   => n == &IBig::ZERO,
         }
     }
 
@@ -48,8 +48,8 @@ impl Value {
         match self {
             Value::Float(_) => 20,
             Value::Int(n) => {
-                if n.is_zero() { return 1; }
-                let bits = n.bits() as f64;
+                if n == &IBig::ZERO { return 1; }
+                let bits = n.bit_len() as f64;
                 (bits / std::f64::consts::LOG2_10).ceil() as usize
             }
         }
@@ -64,11 +64,11 @@ impl Value {
             Value::Int(n) => {
                 let approx = self.approx_digits();
                 if approx <= INLINE_LIMIT {
-                    n.to_str_radix(10)
+                    n.to_string()
                 } else {
                     // GMP decimal conversion of millions of digits is still slow.
                     // Show summary instead. Use :full or :save to get the full number.
-                    let s = n.to_str_radix(10);
+                    let s = n.to_string();
                     let actual = s.len();
                     format!(
                         "[{actual}-digit number: {}...{}]  (use :full or :save <file>)",
@@ -83,7 +83,7 @@ impl Value {
     fn full_string(&self) -> String {
         match self {
             Value::Float(f) => format!("{f}"),
-            Value::Int(n)   => n.to_str_radix(10),
+            Value::Int(n)   => n.to_string(),
         }
     }
 }
@@ -238,7 +238,7 @@ impl Parser {
 
 // --- Arithmetic ---
 
-fn int_or_float2(a: Value, b: Value, fi: impl Fn(BigInt, BigInt) -> Value, ff: impl Fn(f64, f64) -> f64) -> Value {
+fn int_or_float2(a: Value, b: Value, fi: impl Fn(IBig, IBig) -> Value, ff: impl Fn(f64, f64) -> f64) -> Value {
     match (a.to_integer(), b.to_integer()) {
         (Some(x), Some(y)) => fi(x, y),
         _ => Value::Float(ff(a.to_float(), b.to_float())),
@@ -258,8 +258,8 @@ fn v_div(a: Value, b: Value) -> Result<Value, CalcError> {
     if b.is_zero() { return Err(CalcError::DivisionByZero); }
     Ok(match (a.to_integer(), b.to_integer()) {
         (Some(x), Some(y)) => {
-            let (q, r) = x.div_rem(&y);
-            if r.is_zero() { Value::Int(q) }
+            let (q, r) = IBig::div_rem(x, y);
+            if r == IBig::ZERO { Value::Int(q) }
             else { Value::Float(a.to_float() / b.to_float()) }
         }
         _ => Value::Float(a.to_float() / b.to_float()),
@@ -277,13 +277,13 @@ const MAX_INT_EXP: u64 = 4_000_000;
 
 fn v_pow(base: Value, exp: Value) -> Result<Value, CalcError> {
     if let (Some(b), Some(e)) = (base.to_integer(), exp.to_integer()) {
-        if e >= BigInt::zero() {
-            let e_u64 = e.to_u64().unwrap_or(u64::MAX);
+        if e >= IBig::ZERO {
+            let e_u64 = u64::try_from(&e).unwrap_or(u64::MAX);
             if e_u64 > MAX_INT_EXP {
                 return Err(CalcError::ExponentTooLarge(e_u64));
             }
             let e_u32 = e_u64 as u32;
-            return Ok(Value::Int(Pow::pow(b, e_u32)));
+            return Ok(Value::Int(b.pow(e_u32 as usize)));
         }
     }
     Ok(Value::Float(base.to_float().powf(exp.to_float())))
@@ -309,7 +309,7 @@ fn factorial(v: Value) -> Result<Value, CalcError> {
     let f = v.to_float();
     if f < 0.0 || f.fract() != 0.0 { return Err(CalcError::FactorialDomain(f)); }
     let n = f as u64;
-    if n <= 1 { return Ok(Value::Int(BigInt::one())); }
+    if n <= 1 { return Ok(Value::Int(IBig::ONE)); }
     Ok(Value::Int(prime_factorial(n)))
 }
 
@@ -341,9 +341,9 @@ fn legendre(n: u64, p: u64) -> u32 {
 }
 
 // Balanced product of a slice of integers.
-fn product_tree(factors: &[BigUint]) -> BigUint {
+fn product_tree(factors: &[UBig]) -> UBig {
     match factors.len() {
-        0 => BigUint::one(),
+        0 => UBig::ONE,
         1 => factors[0].clone(),
         _ => {
             let mid = factors.len() / 2;
@@ -352,17 +352,17 @@ fn product_tree(factors: &[BigUint]) -> BigUint {
     }
 }
 
-fn prime_factorial(n: u64) -> BigInt {
+fn prime_factorial(n: u64) -> IBig {
     let primes = sieve(n);
     // For each prime, compute p^legendre(n,p) and collect into product tree.
-    let factors: Vec<BigUint> = primes
+    let factors: Vec<UBig> = primes
         .iter()
         .map(|&p| {
             let e = legendre(n, p);
-            Pow::pow(BigUint::from(p), e)
+            UBig::from(p).pow(e as usize)
         })
         .collect();
-    BigInt::from(product_tree(&factors))
+    IBig::from(product_tree(&factors))
 }
 
 // --- Error ---
@@ -471,7 +471,7 @@ fn main() {
                                 let approx = v.approx_digits();
                                 if approx <= INLINE_LIMIT {
                                     if let Value::Int(n) = v {
-                                        println!("{} digits", n.to_str_radix(10).len());
+                                        println!("{} digits", n.to_string().len());
                                     } else {
                                         println!("~{approx} digits");
                                     }
