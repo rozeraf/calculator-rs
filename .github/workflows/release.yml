@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v2.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            use_cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            use_cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_cross: false
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            use_cross: false
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            use_cross: false
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install musl-tools (x86_64 musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.use_cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (cargo)
+        if: matrix.use_cross == false
+        run: cargo build --release -p calc-v2 --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use_cross == true
+        run: cross build --release -p calc-v2 --target ${{ matrix.target }}
+
+      - name: Build lipo universal (macOS only)
+        if: matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
+        run: |
+          # x86_64 was built in another job; here we build it again and lipo
+          rustup target add x86_64-apple-darwin
+          cargo build --release -p calc-v2 --target x86_64-apple-darwin
+          lipo -create \
+            target/x86_64-apple-darwin/release/calc \
+            target/aarch64-apple-darwin/release/calc \
+            -output target/calc-universal
+          tar czf calc-v2-universal-apple-darwin.tar.gz -C target calc-universal
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          BIN=target/${{ matrix.target }}/release/calc
+          tar czf calc-v2-${{ matrix.target }}.tar.gz -C $(dirname $BIN) $(basename $BIN)
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $bin = "target\${{ matrix.target }}\release\calc.exe"
+          Compress-Archive -Path $bin -DestinationPath "calc-v2-${{ matrix.target }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calc-v2-${{ matrix.target }}
+          path: |
+            calc-v2-${{ matrix.target }}.tar.gz
+            calc-v2-${{ matrix.target }}.zip
+            calc-v2-universal-apple-darwin.tar.gz
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: calc-v2-*
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            calc-v2-*.tar.gz
+            calc-v2-*.zip
+          generate_release_notes: true

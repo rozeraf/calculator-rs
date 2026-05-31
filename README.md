@@ -1,41 +1,80 @@
-# Calc
+# calc
 
-Arbitrary-precision CLI calculator written in Rust. It supports interactive REPL mode, single expression evaluation, and result logging/dumping.
+A blazingly fast arbitrary-precision calculator for integer arithmetic.
 
-## Features
+## Версии
 
-- **Arbitrary-precision integers** using the GNU Multiple Precision Arithmetic Library (GMP) via the [`rug`](https://crates.io/crates/rug) crate.
-- **Floating-point math** fallbacks for fractional and extremely large calculations.
-- **Fast factorials** using a prime-counting split-recursive algorithm (based on Peter Luschny's algorithm).
-- **Interactive REPL** with command history powered by `rustyline`.
-- **Expression logging and dumping**: Save your session results to a file or dump huge results directly.
+| Версия | Крейт    | Bignum      | Платформы            |
+|--------|----------|-------------|----------------------|
+| v1     | calc-v1  | rug (GMP)   | Linux (с GMP)        |
+| v2     | calc-v2  | num-bigint  | Linux, macOS, Windows|
 
-## Supported Operators
+## Установка
 
-- `+` (Addition)
-- `-` (Subtraction / Negation)
-- `*` (Multiplication)
-- `/` (Division - exact integer division if no remainder, otherwise float)
-- `%` (Modulo)
-- `^` (Power / Exponentiation)
-- `!` (Factorial)
-- `(...)` (Parentheses for grouping)
+### Скачать бинарник (v2)
 
-## Interactive Commands
+Со страницы Releases скачайте архив под свою платформу:
 
-Inside the REPL, you can use the following commands:
+- `calc-v2-x86_64-unknown-linux-musl.tar.gz` - Linux x64 (статический)
+- `calc-v2-aarch64-unknown-linux-musl.tar.gz` - Linux ARM64 (статический)
+- `calc-v2-x86_64-pc-windows-msvc.zip` - Windows x64
+- `calc-v2-x86_64-apple-darwin.tar.gz` - macOS Intel
+- `calc-v2-aarch64-apple-darwin.tar.gz` - macOS Apple Silicon
+- `calc-v2-universal-apple-darwin.tar.gz` - macOS Universal (Intel + Apple Silicon)
 
-- `:save <file>` — Enable logging of all evaluated expressions and results to a specified file.
-- `:dump <file>` — Save the full, exact value of the last evaluation to a file (especially useful for massive integers).
-- `:full` — Print the complete value of the last result without truncation.
-- `:digits` — Show the exact number of digits in the last result.
-- `:quit` or `:q` — Exit the REPL.
+Распакуйте архив и положите исполняемый файл `calc` (или `calc.exe`) в директорию, находящуюся в вашем `PATH` (например, `~/.local/bin/` или `/usr/local/bin/`).
 
-## Installation
+### Собрать самостоятельно
 
-To compile and install the release binary to your local bin directory:
+Требования: Rust 1.78+
 
+**v2 (рекомендуется):**
 ```bash
-cargo build --release
-install -Dm755 target/release/calc ~/.local/bin/calc
+cargo build --release -p calc-v2
 ```
+
+**v1 (требует установленной библиотеки GMP в системе):**
+```bash
+cargo build --release -p calc-v1
+```
+
+## Использование
+
+Калькулятор может работать в двух режимах:
+
+1. **Интерактивный REPL режим:** Запуск программы без аргументов.
+2. **Режим одного выражения:** Передача математического выражения аргументом командной строки (например, `./calc "5! + 10"`). Поддерживает опциональный аргумент `-o <файл>` / `--output <файл>` для вывода результатов.
+
+### Операторы
+
+| Оператор | Описание | Пример |
+| :--- | :--- | :--- |
+| `+` | Сложение | `2 + 2` |
+| `-` | Вычитание / Отрицание | `-5 - 10` |
+| `*` | Умножение | `3 * 4` |
+| `/` | Деление (если деление нацело без остатка — возвращает целое, иначе — float) | `10 / 3` |
+| `%` | Остаток от деления (Modulo) | `10 % 3` |
+| `^` | Возведение в степень | `2 ^ 10` (для целых чисел ограничен показателем `4_000_000`) |
+| `!` | Факториал | `5!` (поддерживает только целые неотрицательные числа) |
+| `(...)` | Группировка выражений | `(2 + 2) * 2` |
+
+### Команды REPL
+
+В интерактивном режиме доступны следующие команды:
+
+| Команда | Описание |
+| :--- | :--- |
+| `:save <file>` | Начать логирование всех вводимых выражений и результатов в указанный файл. |
+| `:dump <file>` | Сохранить полное точное значение последнего результата в файл (полезно для огромных чисел). |
+| `:full` | Вывести последнее значение целиком на экран без сокращений. |
+| `:digits` | Показать точное число символов/цифр в последнем результате. |
+| `:quit` или `:q` | Выйти из калькулятора. |
+
+## Ограничения
+
+- Вычисление `(10!)!` дает число длиной более 7 миллионов знаков. Это алгоритмический предел для `num-bigint`, на котором расчет в `calc-v2` может занимать около 10 секунд.
+- `num-bigint` не имеет встроенной поддержки вычислений с плавающей точкой произвольной точности, поэтому нецелые расчеты используют встроенный тип `f64`.
+
+## Лицензия
+
+Проект распространяется на условиях лицензии MIT. Подробности см. в файле [LICENSE](file:///home/raf/projects/calculator-rs/LICENSE).
