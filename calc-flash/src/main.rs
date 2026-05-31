@@ -330,15 +330,7 @@ fn v_neg(v: Value) -> Value {
     }
 }
 
-// --- Factorial (Peter Luschny's algorithm) ---
-//
-// n! = product of (swing(k) for odd k) * 2^(n - popcount(n))
-// where swing(n) = n! / (floor(n/2)!)^2
-//
-// In practice: split-recursive prime-counting approach.
-// For each prime p <= n, compute its exact exponent in n! via Legendre's formula,
-// then reconstruct using a balanced product tree. Far fewer large multiplications
-// than sequential or simple divide-and-conquer.
+// --- Factorial (Peter Luschny's Prime Swing algorithm) ---
 
 fn factorial(v: Value) -> Result<Value, CalcError> {
     let f = v.to_float();
@@ -347,7 +339,7 @@ fn factorial(v: Value) -> Result<Value, CalcError> {
     if n <= 1000 {
         return Ok(Value::Int(fact_cache()[n as usize].clone()));
     }
-    Ok(Value::Int(prime_factorial(n)))
+    Ok(Value::Int(prime_swing_factorial(n)))
 }
 
 // Sieve of Eratosthenes, returns primes <= n.
@@ -367,6 +359,7 @@ fn sieve(n: u64) -> Vec<u64> {
 }
 
 // Exponent of prime p in n! via Legendre's formula: sum floor(n/p^k)
+#[allow(dead_code)]
 fn legendre(n: u64, p: u64) -> u32 {
     let mut exp = 0u32;
     let mut pk = p;
@@ -378,6 +371,7 @@ fn legendre(n: u64, p: u64) -> u32 {
 }
 
 // Balanced product of a slice of integers — parallel above PAR_THRESHOLD.
+#[allow(dead_code)]
 fn product_tree(factors: &[Integer]) -> Integer {
     const PAR_THRESHOLD: usize = 128;
     match factors.len() {
@@ -399,7 +393,8 @@ fn product_tree(factors: &[Integer]) -> Integer {
     }
 }
 
-fn prime_factorial(n: u64) -> Integer {
+#[cfg(test)]
+fn prime_factorial_legendre(n: u64) -> Integer {
     let primes = sieve(n);
     // For each prime, compute p^legendre(n,p) and collect into product tree.
     let factors: Vec<Integer> = primes
@@ -410,6 +405,98 @@ fn prime_factorial(n: u64) -> Integer {
         })
         .collect();
     product_tree(&factors)
+}
+
+// ── Balanced product of an owned Vec<Integer> ────────────────────────────
+//
+// Taking Vec by value avoids cloning at the leaves; use this inside
+// odd_swing where we already own the factors.
+
+fn product_tree_owned(mut factors: Vec<Integer>) -> Integer {
+    if factors.is_empty() { return Integer::from(1u32); }
+    while factors.len() > 1 {
+        let mut next = Vec::with_capacity(factors.len().div_ceil(2));
+        let mut iter = factors.into_iter();
+        while let Some(a) = iter.next() {
+            match iter.next() {
+                Some(b) => next.push(a * b),
+                None    => next.push(a),
+            }
+        }
+        factors = next;
+    }
+    factors.remove(0)
+}
+
+// ── Precomputed odd swings for n < 33 ────────────────────────────────────
+
+const SMALL_ODD_SWING: [u64; 33] = [
+    1, 1, 1, 3, 3, 15, 5, 35, 35, 315, 63, 693, 231, 3003, 429, 6435, 6435,
+    109395, 12155, 230945, 46189, 969969, 88179, 2028117, 676039,
+    16900975, 1300075, 35102025, 5014575, 145422675, 9694845,
+    300540195, 300540195
+];
+
+// ── oddSwing ─────────────────────────────────────────────────────────────
+
+fn odd_swing(n: u64, primes: &[u64]) -> Integer {
+    if n < 33 {
+        return Integer::from(SMALL_ODD_SWING[n as usize]);
+    }
+    let sqrtn = (n as f64).sqrt() as u64;
+    let mut factors: Vec<Integer> = Vec::new();
+
+    for &p in primes {
+        if p == 2 { continue; }
+        if p > n { break; }
+
+        if p > n / 2 {
+            // exponent is always 1 for primes in (n/2, n]
+            factors.push(Integer::from(p));
+        } else if p > sqrtn {
+            // exponent is 0 or 1; include p iff floor(n/p) is odd
+            if (n / p) % 2 == 1 {
+                factors.push(Integer::from(p));
+            }
+        } else {
+            // small primes: exponent = number of odd quotients in n/p, n/p², …
+            let mut q = n / p;
+            let mut exp = 0u32;
+            while q > 0 {
+                if q % 2 == 1 { exp += 1; }
+                q /= p;
+            }
+            if exp > 0 {
+                factors.push(Integer::from(p).pow(exp));
+            }
+        }
+    }
+
+    product_tree_owned(factors)
+}
+
+// ── oddFactorial ──────────────────────────────────────────────────────────
+
+fn odd_factorial(n: u64, primes: &[u64]) -> Integer {
+    if n < 2 { return Integer::from(1u32); }
+    let of_half = odd_factorial(n / 2, primes);
+    let swing   = odd_swing(n, primes);
+    // of_half² × swing  — clone of_half before consuming it
+    of_half.clone() * of_half * swing
+}
+
+// ── prime_swing_factorial ─────────────────────────────────────────────────
+
+fn prime_swing_factorial(n: u64) -> Integer {
+    if n < 2 { return Integer::from(1u32); }
+    let primes = sieve(n);
+    let odd    = odd_factorial(n, &primes);
+    // Multiply by 2^(n − popcount(n)).
+    // rug::Integer supports left-shift: value << bits.
+    // n.count_ones() is popcount for u64 in Rust std.
+    let shift = n - u64::from(n.count_ones());
+    // shift fits in u32 for any n that is remotely computable
+    odd << (shift as u32)
 }
 
 // --- Error ---
@@ -608,9 +695,9 @@ mod tests {
         assert!(eval("2^9999999999").is_err());
     }
     #[test] fn cached_factorial() {
-        // values from cache must match prime_factorial for boundary cases
+        // values from cache must match prime_swing_factorial for boundary cases
         let cached = eval("1000!").unwrap().full_string();
-        let direct = Value::Int(prime_factorial(1000)).full_string();
+        let direct = Value::Int(prime_swing_factorial(1000)).full_string();
         assert_eq!(cached, direct);
     }
     #[test] fn chain_continuation() {
@@ -651,6 +738,32 @@ mod tests {
         assert!((eval("3.14").unwrap().to_float() - 3.14).abs() < 1e-10);
         assert!((eval("1e10").unwrap().to_float() - 1e10).abs() < 1.0);
         assert!((eval("2.5e-1").unwrap().to_float() - 0.25).abs() < 1e-15);
+    }
+
+    #[test]
+    fn swing_matches_legendre() {
+        // Prime Swing must produce identical results to the Legendre method
+        for n in [0u64, 1, 2, 5, 10, 20, 100, 500, 1001, 5000] {
+            let swing    = prime_swing_factorial(n).to_string_radix(10);
+            let legendre = prime_factorial_legendre(n).to_string_radix(10);
+            assert_eq!(swing, legendre, "mismatch at n={n}");
+        }
+    }
+
+    #[test]
+    fn swing_digit_count() {
+        // 10000! has exactly 35660 decimal digits — canonical reference value
+        let s = prime_swing_factorial(10_000).to_string_radix(10);
+        assert_eq!(s.len(), 35660, "10000! digit count wrong");
+    }
+
+    #[test]
+    fn swing_small_table() {
+        // spot-check the SMALL_ODD_SWING table entries that are easy to verify
+        assert_eq!(SMALL_ODD_SWING[1],  1);
+        assert_eq!(SMALL_ODD_SWING[5],  15);
+        assert_eq!(SMALL_ODD_SWING[10], 63);
+        assert_eq!(SMALL_ODD_SWING[20], 46189);
     }
 }
 
