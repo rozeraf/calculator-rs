@@ -1,0 +1,12 @@
+[package]
+name = "calc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rustyline = "14"
+rug = { version = "1", features = ["integer"] }
+
+[[bin]]
+name = "calc"
+path = "src/main.rs"
