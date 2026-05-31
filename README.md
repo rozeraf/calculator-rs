@@ -2,79 +2,79 @@
 
 A blazingly fast arbitrary-precision calculator for integer arithmetic.
 
-## Версии
+## Versions
 
-| Версия | Крейт    | Bignum      | Платформы            |
-|--------|----------|-------------|----------------------|
-| v1     | calc-v1  | rug (GMP)   | Linux (с GMP)        |
-| v2     | calc-v2  | num-bigint  | Linux, macOS, Windows|
+| Version | Crate    | Bignum Engine | Supported Platforms   |
+|---------|----------|---------------|-----------------------|
+| v1      | calc-v1  | rug (GMP)     | Linux (requires GMP)  |
+| v2      | calc-v2  | num-bigint    | Linux, macOS, Windows |
 
-## Установка
+## Installation
 
-### Скачать бинарник (v2)
+### Download Precompiled Binary (v2)
 
-Со страницы Releases скачайте архив под свою платформу:
+You can download the archive for your platform from the Releases page:
 
-- `calc-v2-x86_64-unknown-linux-musl.tar.gz` - Linux x64 (статический)
-- `calc-v2-aarch64-unknown-linux-musl.tar.gz` - Linux ARM64 (статический)
+- `calc-v2-x86_64-unknown-linux-musl.tar.gz` - Linux x64 (statically linked)
+- `calc-v2-aarch64-unknown-linux-musl.tar.gz` - Linux ARM64 (statically linked)
 - `calc-v2-x86_64-pc-windows-msvc.zip` - Windows x64
 - `calc-v2-x86_64-apple-darwin.tar.gz` - macOS Intel
 - `calc-v2-aarch64-apple-darwin.tar.gz` - macOS Apple Silicon
 - `calc-v2-universal-apple-darwin.tar.gz` - macOS Universal (Intel + Apple Silicon)
 
-Распакуйте архив и положите исполняемый файл `calc` (или `calc.exe`) в директорию, находящуюся в вашем `PATH` (например, `~/.local/bin/` или `/usr/local/bin/`).
+Extract the archive and place the executable `calc` (or `calc.exe` on Windows) into a directory in your `PATH` (e.g., `~/.local/bin/` or `/usr/local/bin/`).
 
-### Собрать самостоятельно
+### Build from Source
 
-Требования: Rust 1.78+
+Requirements: Rust 1.78+
 
-**v2 (рекомендуется):**
+**v2 (recommended):**
 ```bash
 cargo build --release -p calc-v2
 ```
 
-**v1 (требует установленной библиотеки GMP в системе):**
+**v1 (requires GMP system library):**
 ```bash
 cargo build --release -p calc-v1
 ```
 
-## Использование
+## Usage
 
-Калькулятор может работать в двух режимах:
+The calculator can operate in two modes:
 
-1. **Интерактивный REPL режим:** Запуск программы без аргументов.
-2. **Режим одного выражения:** Передача математического выражения аргументом командной строки (например, `./calc "5! + 10"`). Поддерживает опциональный аргумент `-o <файл>` / `--output <файл>` для вывода результатов.
+1. **Interactive REPL Mode:** Launch the program without any arguments.
+2. **Single Expression Mode:** Pass the mathematical expression as a command-line argument (e.g., `./calc "5! + 10"`). It also supports an optional output file argument `-o <file>` / `--output <file>`.
 
-### Операторы
+### Operators
 
-| Оператор | Описание | Пример |
+| Operator | Description | Example |
 | :--- | :--- | :--- |
-| `+` | Сложение | `2 + 2` |
-| `-` | Вычитание / Отрицание | `-5 - 10` |
-| `*` | Умножение | `3 * 4` |
-| `/` | Деление (если деление нацело без остатка — возвращает целое, иначе — float) | `10 / 3` |
-| `%` | Остаток от деления (Modulo) | `10 % 3` |
-| `^` | Возведение в степень | `2 ^ 10` (для целых чисел ограничен показателем `4_000_000`) |
-| `!` | Факториал | `5!` (поддерживает только целые неотрицательные числа) |
-| `(...)` | Группировка выражений | `(2 + 2) * 2` |
+| `+` | Addition | `2 + 2` |
+| `-` | Subtraction / Negation | `-5 - 10` |
+| `*` | Multiplication | `3 * 4` |
+| `/` | Division (exact integer division if remainder is zero, otherwise falls back to float) | `10 / 3` |
+| `%` | Modulo (remainder of division) | `10 % 3` |
+| `^` | Exponentiation | `2 ^ 10` (limited to exponent `4_000_000` for integer math) |
+| `!` | Factorial | `5!` (only supports non-negative integers) |
+| `(...)` | Parentheses for grouping | `(2 + 2) * 2` |
 
-### Команды REPL
+### REPL Commands
 
-В интерактивном режиме доступны следующие команды:
+The following commands are available inside interactive mode:
 
-| Команда | Описание |
+| Command | Description |
 | :--- | :--- |
-| `:save <file>` | Начать логирование всех вводимых выражений и результатов в указанный файл. |
-| `:dump <file>` | Сохранить полное точное значение последнего результата в файл (полезно для огромных чисел). |
-| `:full` | Вывести последнее значение целиком на экран без сокращений. |
-| `:digits` | Показать точное число символов/цифр в последнем результате. |
-| `:quit` или `:q` | Выйти из калькулятора. |
+| `:save <file>` | Start logging all inputs and evaluation results into the specified file. |
+| `:dump <file>` | Save the full exact value of the last evaluation result directly to a file (useful for massive integers). |
+| `:full` | Print the full exact value of the last result without truncation. |
+| `:digits` | Show the exact number of digits in the last result. |
+| `:quit` or `:q` | Exit the REPL. |
 
-## Ограничения
+## Limitations
 
-- Вычисление `(10!)!` дает число длиной более 7 миллионов знаков. Это алгоритмический предел для `num-bigint`, на котором расчет в `calc-v2` может занимать около 10 секунд.
-- `num-bigint` не имеет встроенной поддержки вычислений с плавающей точкой произвольной точности, поэтому нецелые расчеты используют встроенный тип `f64`.
+- Calculating `(10!)!` yields a number with over 7 million digits. This is an algorithmic limitation of `num-bigint` (which is slower than GMP), and calculation in `calc-v2` may take about 10 seconds.
+- `num-bigint` does not support arbitrary-precision floats, so fractional calculations fall back to using standard `f64`.
 
-## Лицензия
+## License
 
-Проект распространяется на условиях лицензии MIT. Подробности см. в файле [LICENSE](file:///home/raf/projects/calculator-rs/LICENSE).
+This project is licensed under the MIT License. For details, see the [LICENSE](file:///home/raf/projects/calculator-rs/LICENSE) file.
