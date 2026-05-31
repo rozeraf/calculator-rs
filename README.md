@@ -6,14 +6,15 @@ A blazingly fast arbitrary-precision calculator for integer arithmetic.
 
 | Version | Crate    | Bignum Engine | Supported Platforms   | Performance | Requirements |
 |---------|----------|---------------|-----------------------|-------------|--------------|
-| **flash**  | `calc-flash`| rug (GMP)     | Linux                 | **Extremely Fast** | Requires system `gmp`, `mpfr`, `mpc` |
-| **cross**  | `calc-cross`| num-bigint    | Linux, macOS, Windows | Moderate    | None (pure Rust, zero-dependency) |
+| **flash** | `calc-flash`| rug (GMP)     | Linux                 | **Extremely Fast** | Requires system `gmp`, `mpfr`, `mpc` |
+| **cross** | `calc-cross`| dashu         | Linux, macOS, Windows | **Fast**    | None (pure Rust, zero-dependency) |
 
 > [!NOTE]
 > **Difference between Versions:**
 > The primary difference is **portability vs. raw performance**, rather than one version being obsolete.
-> - **flash** uses the C-based **GNU Multiple Precision Arithmetic Library (GMP)** via the `rug` crate. It is **significantly faster** (orders of magnitude faster on massive calculations like large factorials), but is hard to compile cross-platform (especially on Windows) without installing GNU dev tools.
-> - **cross** is written in **pure Rust** (`num-bigint`). It has zero external dependencies and compiles out-of-the-box on Windows, macOS, and Linux with a simple `cargo build`, but performs slower for extremely large numbers.
+> - **flash** uses the C-based **GNU Multiple Precision Arithmetic Library (GMP)** via the `rug` crate. It is **extremely fast** (using state-of-the-art assembly-optimized algorithms for massive calculations like large factorials), but is hard to compile cross-platform (especially on Windows) without installing GNU dev tools.
+> - **cross** is written in **pure Rust** (`dashu`). It has zero external dependencies and compiles out-of-the-box on Windows, macOS, and Linux with a simple `cargo build`. Thanks to `dashu`'s implementation of Karatsuba multiplication and advanced division algorithms, it is significantly faster than standard `num-bigint` and bridges the gap with GMP on mid-to-large inputs.
+
 
 ## Installation
 
@@ -84,9 +85,10 @@ The following commands are available inside interactive mode:
 
 ## Limitations
 
-- Calculating `(10!)!` yields a number with over 7 million digits. This is an algorithmic limitation of `num-bigint` (which is slower than GMP), and calculation in `calc-cross` may take about 10 seconds.
-- `num-bigint` does not support arbitrary-precision floats, so fractional calculations fall back to using standard `f64`.
+- Calculating `(10!)!` yields a number with over 7 million digits. This is an algorithmic limitation of pure Rust arithmetic engines compared to GMP; while `dashu` is extremely optimized and highly competitive, calculating `(10!)!` in `calc-cross` may still take around 10–30 seconds.
+- `dashu` does not support arbitrary-precision floats, so fractional calculations fall back to using standard `f64`.
 
 ## License
 
 This project is licensed under the MIT License. For details, see the [LICENSE](file:///home/raf/projects/calculator-rs/LICENSE) file.
+
