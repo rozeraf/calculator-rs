@@ -65,7 +65,7 @@ impl Value {
                 if *n == 0 { return 1; }
                 let bits = n.significant_bits() as u64;
                 // integer approximation of bits * log10(2), avoids float rounding
-                ((bits * 1233 + 4095) / 4096) as usize
+                (bits * 1233).div_ceil(4096) as usize
             }
         }
     }
@@ -421,6 +421,12 @@ fn eval(expr: &str) -> Result<Value, CalcError> {
     Parser::new(tokens).parse()
 }
 
+/// Returns true when the line starts with a binary operator,
+/// indicating the user wants to chain from the last result.
+fn is_continuation(s: &str) -> bool {
+    matches!(s.trim_start().chars().next(), Some('+' | '-' | '*' | '/' | '%' | '^'))
+}
+
 // --- Entry point ---
 
 fn main() {
@@ -505,11 +511,23 @@ fn main() {
                     _ => {}
                 }
 
-                match eval(trimmed) {
+                let expr_to_eval: String = if is_continuation(trimmed) {
+                    match &last {
+                        None => {
+                            eprintln!("error: no previous result to continue from");
+                            continue;
+                        }
+                        Some(v) => format!("{}{}", v.display_string(), trimmed),
+                    }
+                } else {
+                    trimmed.to_string()
+                };
+
+                match eval(&expr_to_eval) {
                     Ok(v) => {
                         println!("= {}", v.display_string());
                         if let Some(path) = &log_file {
-                            append_to_file(path, trimmed, &v.full_string());
+                            append_to_file(path, &expr_to_eval, &v.full_string());
                         }
                         last = Some(v);
                     }
@@ -567,5 +585,11 @@ mod tests {
         let cached = eval("1000!").unwrap().full_string();
         let direct = Value::Int(prime_factorial(1000)).full_string();
         assert_eq!(cached, direct);
+    }
+    #[test] fn chain_continuation() {
+        // simulate: user typed "56+2", got 58, then typed "+8"
+        let first = eval("56+2").unwrap();
+        let expanded = format!("{}{}", first.display_string(), "+8");
+        assert_eq!(eval(&expanded).unwrap().to_float(), 66.0);
     }
 }
