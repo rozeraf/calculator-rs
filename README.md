@@ -4,17 +4,28 @@ A blazingly fast arbitrary-precision calculator for integer arithmetic.
 
 ## Versions
 
-| Version | Crate    | Bignum Engine | Supported Platforms   |
-|---------|----------|---------------|-----------------------|
-| v1      | calc-v1  | rug (GMP)     | Linux (requires GMP)  |
-| v2      | calc-v2  | num-bigint    | Linux, macOS, Windows |
+| Version | Crate    | Bignum Engine | Supported Platforms   | Performance | Requirements |
+|---------|----------|---------------|-----------------------|-------------|--------------|
+| **v1**  | `calc-v1`| rug (GMP)     | Linux                 | **Extremely Fast** | Requires system `gmp`, `mpfr`, `mpc` |
+| **v2**  | `calc-v2`| num-bigint    | Linux, macOS, Windows | Moderate    | None (pure Rust, zero-dependency) |
+
+> [!NOTE]
+> **Difference between Versions:**
+> The primary difference is **portability vs. raw performance**, rather than one version being obsolete.
+> - **v1** uses the C-based **GNU Multiple Precision Arithmetic Library (GMP)** via the `rug` crate. It is **significantly faster** (orders of magnitude faster on massive calculations like large factorials), but is hard to compile cross-platform (especially on Windows) without installing GNU dev tools.
+> - **v2** is written in **pure Rust** (`num-bigint`). It has zero external dependencies and compiles out-of-the-box on Windows, macOS, and Linux with a simple `cargo build`, but performs slower for extremely large numbers.
 
 ## Installation
 
-### Download Precompiled Binary (v2)
+
+### Download Precompiled Binary
 
 You can download the archive for your platform from the Releases page:
 
+**v1 (Statically linked with MPFR/GMP via system libs, Linux only — Extremely Fast):**
+- `calc-v1-x86_64-unknown-linux-gnu.tar.gz` - Linux x64
+
+**v2 (Pure Rust, Zero dependency — Highly portable):**
 - `calc-v2-x86_64-unknown-linux-musl.tar.gz` - Linux x64 (statically linked)
 - `calc-v2-aarch64-unknown-linux-musl.tar.gz` - Linux ARM64 (statically linked)
 - `calc-v2-x86_64-pc-windows-msvc.zip` - Windows x64
@@ -23,6 +34,7 @@ You can download the archive for your platform from the Releases page:
 - `calc-v2-universal-apple-darwin.tar.gz` - macOS Universal (Intel + Apple Silicon)
 
 Extract the archive and place the executable `calc` (or `calc.exe` on Windows) into a directory in your `PATH` (e.g., `~/.local/bin/` or `/usr/local/bin/`).
+
 
 ### Build from Source
 

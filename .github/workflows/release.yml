@@ -10,26 +10,37 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.target }}
+    name: Build ${{ matrix.target }} (${{ matrix.crate }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # v1 build (Linux with GMP system dependencies)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            crate: calc-v1
+            use_cross: false
+          # v2 builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            crate: calc-v2
             use_cross: false
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
+            crate: calc-v2
             use_cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            crate: calc-v2
             use_cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
+            crate: calc-v2
             use_cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
+            crate: calc-v2
             use_cross: false
 
     steps:
@@ -38,6 +49,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install GMP and MPFR (x86_64-unknown-linux-gnu only)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgmp-dev libmpfr-dev libmpc-dev
 
       - name: Install musl-tools (x86_64 musl)
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -49,11 +66,11 @@ jobs:
 
       - name: Build (cargo)
         if: matrix.use_cross == false
-        run: cargo build --release -p calc-v2 --target ${{ matrix.target }}
+        run: cargo build --release -p ${{ matrix.crate }} --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross == true
-        run: cross build --release -p calc-v2 --target ${{ matrix.target }}
+        run: cross build --release -p ${{ matrix.crate }} --target ${{ matrix.target }}
 
       - name: Build lipo universal (macOS only)
         if: matrix.os == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
@@ -70,22 +87,28 @@ jobs:
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
-          BIN=target/${{ matrix.target }}/release/calc
-          tar czf calc-v2-${{ matrix.target }}.tar.gz -C $(dirname $BIN) $(basename $BIN)
+          # Set bin name based on crate
+          if [ "${{ matrix.crate }}" = "calc-v1" ]; then
+            BIN_NAME="calc-v1"
+          else
+            BIN_NAME="calc"
+          fi
+          BIN=target/${{ matrix.target }}/release/$BIN_NAME
+          tar czf ${{ matrix.crate }}-${{ matrix.target }}.tar.gz -C $(dirname $BIN) $(basename $BIN)
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
           $bin = "target\${{ matrix.target }}\release\calc.exe"
-          Compress-Archive -Path $bin -DestinationPath "calc-v2-${{ matrix.target }}.zip"
+          Compress-Archive -Path $bin -DestinationPath "${{ matrix.crate }}-${{ matrix.target }}.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: calc-v2-${{ matrix.target }}
+          name: ${{ matrix.crate }}-${{ matrix.target }}
           path: |
-            calc-v2-${{ matrix.target }}.tar.gz
-            calc-v2-${{ matrix.target }}.zip
+            ${{ matrix.crate }}-${{ matrix.target }}.tar.gz
+            ${{ matrix.crate }}-${{ matrix.target }}.zip
             calc-v2-universal-apple-darwin.tar.gz
           if-no-files-found: ignore
 
@@ -95,12 +118,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: calc-v2-*
+          pattern: calc-*
           merge-multiple: true
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            calc-v1-*.tar.gz
             calc-v2-*.tar.gz
             calc-v2-*.zip
           generate_release_notes: true
+
