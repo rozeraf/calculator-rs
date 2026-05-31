@@ -350,14 +350,24 @@ fn legendre(n: u64, p: u64) -> u32 {
     exp
 }
 
-// Balanced product of a slice of integers.
+// Balanced product of a slice of integers — parallel above PAR_THRESHOLD.
 fn product_tree(factors: &[Integer]) -> Integer {
+    const PAR_THRESHOLD: usize = 128;
     match factors.len() {
         0 => Integer::from(1),
         1 => factors[0].clone(),
-        _ => {
-            let mid = factors.len() / 2;
+        n if n <= PAR_THRESHOLD => {
+            // sequential below threshold to avoid rayon overhead on tiny slices
+            let mid = n / 2;
             product_tree(&factors[..mid]) * product_tree(&factors[mid..])
+        }
+        n => {
+            let mid = n / 2;
+            let (left, right) = rayon::join(
+                || product_tree(&factors[..mid]),
+                || product_tree(&factors[mid..]),
+            );
+            left * right
         }
     }
 }
