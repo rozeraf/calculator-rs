@@ -1,11 +1,12 @@
 [package]
-name = "calc-v2"
+name = "calc-cross"
 version = "2.0.0"
 edition = "2021"
 
 [[bin]]
-name = "calc"
+name = "calc-cross"
 path = "src/main.rs"
+
 
 [dependencies]
 num-bigint = "0.4"

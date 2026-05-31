@@ -1,5 +1,5 @@
 [package]
-name = "calc-v1"
+name = "calc-flash"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,6 +8,7 @@ rustyline = "14"
 rug = { version = "1", features = ["integer"] }
 
 [[bin]]
-name = "calc-v1"
+name = "calc-flash"
 path = "src/main.rs"
+
 

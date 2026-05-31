@@ -16,31 +16,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # v1 build (Linux with GMP system dependencies)
+          # flash build (Linux with GMP system dependencies)
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            crate: calc-v1
+            crate: calc-flash
             use_cross: false
-          # v2 builds
+          # cross builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            crate: calc-v2
+            crate: calc-cross
             use_cross: false
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            crate: calc-v2
+            crate: calc-cross
             use_cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            crate: calc-v2
+            crate: calc-cross
             use_cross: false
           - os: macos-latest
             target: x86_64-apple-darwin
-            crate: calc-v2
+            crate: calc-cross
             use_cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
-            crate: calc-v2
+            crate: calc-cross
             use_cross: false
 
     steps:
@@ -77,21 +77,21 @@ jobs:
         run: |
           # x86_64 was built in another job; here we build it again and lipo
           rustup target add x86_64-apple-darwin
-          cargo build --release -p calc-v2 --target x86_64-apple-darwin
+          cargo build --release -p calc-cross --target x86_64-apple-darwin
           lipo -create \
-            target/x86_64-apple-darwin/release/calc \
-            target/aarch64-apple-darwin/release/calc \
+            target/x86_64-apple-darwin/release/calc-cross \
+            target/aarch64-apple-darwin/release/calc-cross \
             -output target/calc-universal
-          tar czf calc-v2-universal-apple-darwin.tar.gz -C target calc-universal
+          tar czf calc-cross-universal-apple-darwin.tar.gz -C target calc-universal
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
         run: |
           # Set bin name based on crate
-          if [ "${{ matrix.crate }}" = "calc-v1" ]; then
-            BIN_NAME="calc-v1"
+          if [ "${{ matrix.crate }}" = "calc-flash" ]; then
+            BIN_NAME="calc-flash"
           else
-            BIN_NAME="calc"
+            BIN_NAME="calc-cross"
           fi
           BIN=target/${{ matrix.target }}/release/$BIN_NAME
           tar czf ${{ matrix.crate }}-${{ matrix.target }}.tar.gz -C $(dirname $BIN) $(basename $BIN)
@@ -99,7 +99,7 @@ jobs:
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
-          $bin = "target\${{ matrix.target }}\release\calc.exe"
+          $bin = "target\${{ matrix.target }}\release\calc-cross.exe"
           Compress-Archive -Path $bin -DestinationPath "${{ matrix.crate }}-${{ matrix.target }}.zip"
 
       - name: Upload artifact
@@ -109,7 +109,7 @@ jobs:
           path: |
             ${{ matrix.crate }}-${{ matrix.target }}.tar.gz
             ${{ matrix.crate }}-${{ matrix.target }}.zip
-            calc-v2-universal-apple-darwin.tar.gz
+            calc-cross-universal-apple-darwin.tar.gz
           if-no-files-found: ignore
 
   release:
@@ -124,8 +124,9 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            calc-v1-*.tar.gz
-            calc-v2-*.tar.gz
-            calc-v2-*.zip
+            calc-flash-*.tar.gz
+            calc-cross-*.tar.gz
+            calc-cross-*.zip
           generate_release_notes: true
+
 
