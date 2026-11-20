@@ -102,7 +102,7 @@ If there is no previous result an error is shown instead of hanging.
 
 | Feature | Detail |
 | :--- | :--- |
-| **Factorial algorithm** | Prime-sieve + Legendre exponent counting + balanced product tree — far fewer large multiplications than naïve approaches |
+| **Factorial algorithm** | Peter Luschny's Prime Swing: n! = (odd part, built recursively from prime-factored swing numbers) × 2^(n − popcount(n)) — far fewer large multiplications than naïve approaches |
 | **Parallel product tree** | `rayon::join` parallelises the tree above 128 factors, giving a real speedup on multi-core machines for inputs like `100000!` |
 | **Factorial cache** | Factorials ≤ 1000 are computed once and stored in a `OnceLock<Vec<Integer>>`; subsequent calls are an O(1) clone |
 | **Safe exponentiation** | Exponents larger than `u32::MAX` (4 294 967 295) return an error immediately instead of hanging |
