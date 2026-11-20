@@ -70,6 +70,15 @@ The calculator operates in two modes:
 | `^` | Exponentiation (integer base & exponent ≤ 2³²−1) | `2 ^ 10` |
 | `!` | Factorial (non-negative integers only) | `5!` |
 | `(...)` | Grouping | `(2 + 2) * 2` |
+| `√` `∛` `∜` | Square / cube / fourth root (exact integer for perfect powers, otherwise `f64`) | `√16`, `∛-8`, `√(3²+4²)` |
+| `²` `³` `⁻¹` … | Superscript exponent (any superscript digits, optional `⁻`) | `5²`, `2¹⁰`, `2⁻¹` |
+| `π` | Pi (as `f64`) | `2π` |
+
+**Unicode aliases:** `×` `·` `⋅` `∙` `∗` work as `*`, `÷` `∕` as `/`, and `−` (U+2212) as `-`. Non-breaking spaces are treated as whitespace, so expressions pasted from documents work as-is.
+
+**Implicit multiplication** works before `√` `∛` `∜` `π` and `(`, with the same precedence as `*`: `2√3`, `3π`, `2(1+1)`, `6/2√9 = 9`. It does not apply between two plain numbers, so `2 3` is an error.
+
+**Precedence of roots:** a root applies to the following operand together with its `!` and superscripts, so `√4! = √(4!)` and `√4^3 = (√4)^3`. A leading minus is allowed in the radicand: `∛-8 = -2`, while `√-4` is an error.
 
 ### REPL Commands
 
@@ -95,6 +104,8 @@ When a line starts with a binary operator the previous result is used as the lef
 > - 100
 = 32
 ```
+
+This also works with the Unicode operators and superscripts, e.g. `× 3` or `²` on its own squares the previous result.
 
 If there is no previous result an error is shown instead of hanging.
 

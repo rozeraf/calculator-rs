@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use rustyline::{DefaultEditor, error::ReadlineError};
 use dashu::integer::{IBig, UBig};
-use dashu::base::{BitTest, DivRem};
+use dashu::base::{BitTest, DivRem, UnsignedAbs};
 
 // --- Value ---
 
@@ -95,6 +95,19 @@ enum Token {
     Number(f64),
     Plus, Minus, Star, Slash, Percent, Caret, Bang,
     LParen, RParen, Eof,
+    Root(u32),   // √ ∛ ∜ — prefix n-th root
+    Pi,          // π
+    Sup(String), // superscript exponent, e.g. "²" → "2", "⁻¹" → "-1"
+}
+
+// Maps superscript digits (⁰¹²³⁴⁵⁶⁷⁸⁹) to ASCII digits.
+fn superscript_digit(c: char) -> Option<char> {
+    match c {
+        '⁰' => Some('0'), '¹' => Some('1'), '²' => Some('2'), '³' => Some('3'),
+        '⁴' => Some('4'), '⁵' => Some('5'), '⁶' => Some('6'), '⁷' => Some('7'),
+        '⁸' => Some('8'), '⁹' => Some('9'),
+        _ => None,
+    }
 }
 
 // --- Lexer ---
@@ -109,7 +122,24 @@ impl Lexer {
         self.pos += 1; c
     }
     fn skip_ws(&mut self) {
-        while matches!(self.peek(), Some(' ') | Some('\t')) { self.advance(); }
+        // is_whitespace also covers NBSP and other Unicode spaces from copy-paste
+        while self.peek().is_some_and(char::is_whitespace) { self.advance(); }
+    }
+    // Reads a superscript exponent: optional '⁻' followed by superscript digits.
+    fn read_superscript(&mut self) -> Result<Token, CalcError> {
+        let mut s = String::new();
+        if self.peek() == Some('⁻') {
+            self.advance();
+            s.push('-');
+        }
+        while let Some(d) = self.peek().and_then(superscript_digit) {
+            self.advance();
+            s.push(d);
+        }
+        if s.is_empty() || s == "-" {
+            return Err(CalcError::UnexpectedChar('⁻'));
+        }
+        Ok(Token::Sup(s))
     }
     fn read_number(&mut self) -> Result<f64, CalcError> {
         let start = self.pos;
@@ -131,9 +161,17 @@ impl Lexer {
                 Some(c) => match c {
                     '0'..='9' | '.' => tokens.push(Token::Number(self.read_number()?)),
                     '+' => { self.advance(); tokens.push(Token::Plus); }
-                    '-' => { self.advance(); tokens.push(Token::Minus); }
-                    '*' => { self.advance(); tokens.push(Token::Star); }
-                    '/' => { self.advance(); tokens.push(Token::Slash); }
+                    // − U+2212 minus sign
+                    '-' | '−' => { self.advance(); tokens.push(Token::Minus); }
+                    // × multiplication, · middle dot, ⋅ dot operator, ∙ bullet operator, ∗ asterisk operator
+                    '*' | '×' | '·' | '⋅' | '∙' | '∗' => { self.advance(); tokens.push(Token::Star); }
+                    // ÷ division sign, ∕ division slash
+                    '/' | '÷' | '∕' => { self.advance(); tokens.push(Token::Slash); }
+                    '√' => { self.advance(); tokens.push(Token::Root(2)); }
+                    '∛' => { self.advance(); tokens.push(Token::Root(3)); }
+                    '∜' => { self.advance(); tokens.push(Token::Root(4)); }
+                    'π' => { self.advance(); tokens.push(Token::Pi); }
+                    c if c == '⁻' || superscript_digit(c).is_some() => tokens.push(self.read_superscript()?),
                     '%' => { self.advance(); tokens.push(Token::Percent); }
                     '^' => { self.advance(); tokens.push(Token::Caret); }
                     '!' => { self.advance(); tokens.push(Token::Bang); }
@@ -149,12 +187,15 @@ impl Lexer {
 
 // --- Parser ---
 //
-// expr    = term   ((+ | -)  term)*
-// term    = unary  ((* | / | %) unary)*
-// unary   = - unary | power
-// power   = postfix (^ unary)?   right-associative
-// postfix = primary !*
-// primary = number | ( expr )
+// expr     = term   ((+ | -)  term)*
+// term     = unary  ((* | / | %) unary | <implicit *> unary)*
+//            implicit multiplication only before √ ∛ ∜ π ( — e.g. 2√3, 3π, 2(1+1)
+// unary    = - unary | power
+// power    = prefix (^ unary)?   right-associative
+// prefix   = (√ | ∛ | ∜) radicand | postfix
+// radicand = - radicand | prefix    so that ∛-8 works
+// postfix  = primary (! | superscript)*
+// primary  = number | π | ( expr )
 
 struct Parser { tokens: Vec<Token>, pos: usize }
 
@@ -191,6 +232,7 @@ impl Parser {
                 Token::Star    => { self.advance(); l = v_mul(l, self.parse_unary()?)?; }
                 Token::Slash   => { self.advance(); l = v_div(l, self.parse_unary()?)?; }
                 Token::Percent => { self.advance(); l = v_rem(l, self.parse_unary()?)?; }
+                Token::Root(_) | Token::Pi | Token::LParen => { l = v_mul(l, self.parse_unary()?)?; }
                 _ => break,
             }
         }
@@ -204,24 +246,46 @@ impl Parser {
         self.parse_power()
     }
     fn parse_power(&mut self) -> Result<Value, CalcError> {
-        let base = self.parse_postfix()?;
+        let base = self.parse_prefix()?;
         if self.peek() == &Token::Caret {
             self.advance();
             return v_pow(base, self.parse_unary()?);
         }
         Ok(base)
     }
+    fn parse_prefix(&mut self) -> Result<Value, CalcError> {
+        if let Token::Root(n) = *self.peek() {
+            self.advance();
+            return v_root(self.parse_radicand()?, n);
+        }
+        self.parse_postfix()
+    }
+    fn parse_radicand(&mut self) -> Result<Value, CalcError> {
+        if self.peek() == &Token::Minus {
+            self.advance();
+            return Ok(v_neg(self.parse_radicand()?));
+        }
+        self.parse_prefix()
+    }
     fn parse_postfix(&mut self) -> Result<Value, CalcError> {
         let mut v = self.parse_primary()?;
-        while self.peek() == &Token::Bang {
-            self.advance();
-            v = factorial(v)?;
+        loop {
+            match self.peek().clone() {
+                Token::Bang => { self.advance(); v = factorial(v)?; }
+                Token::Sup(s) => {
+                    self.advance();
+                    let e: IBig = s.parse().map_err(|_| CalcError::InvalidNumber(s.clone()))?;
+                    v = v_pow(v, Value::Int(e))?;
+                }
+                _ => break,
+            }
         }
         Ok(v)
     }
     fn parse_primary(&mut self) -> Result<Value, CalcError> {
         match self.peek().clone() {
             Token::Number(n) => { self.advance(); Ok(Value::Float(n)) }
+            Token::Pi => { self.advance(); Ok(Value::Float(std::f64::consts::PI)) }
             Token::LParen => {
                 self.advance();
                 let v = self.parse_expr()?;
@@ -293,6 +357,47 @@ fn v_neg(v: Value) -> Value {
         Value::Int(n)   => Value::Int(-n),
         Value::Float(f) => Value::Float(-f),
     }
+}
+
+// n-th root. Exact Int for perfect powers, otherwise f64.
+// Even roots of negative numbers are a domain error; odd roots keep the sign.
+fn v_root(v: Value, n: u32) -> Result<Value, CalcError> {
+    if let Some(x) = v.to_integer() {
+        let neg = x < IBig::ZERO;
+        if neg && n % 2 == 0 { return Err(CalcError::RootDomain(n)); }
+        let a: UBig = x.unsigned_abs();
+        let r = a.nth_root(n as usize);
+        if r.pow(n as usize) == a {
+            let r = IBig::from(r);
+            return Ok(Value::Int(if neg { -r } else { r }));
+        }
+        let f = int_root_f64(&a, n)?;
+        return Ok(Value::Float(if neg { -f } else { f }));
+    }
+    let f = v.to_float();
+    if f < 0.0 && n % 2 == 0 { return Err(CalcError::RootDomain(n)); }
+    Ok(Value::Float(float_root(f, n)))
+}
+
+fn float_root(f: f64, n: u32) -> f64 {
+    match n {
+        2 => f.sqrt(),
+        3 => f.cbrt(),
+        _ => f.signum() * f.abs().powf(1.0 / f64::from(n)),
+    }
+}
+
+// n-th root of a non-negative integer as f64. Huge inputs are shifted right by a
+// multiple of n bits first so that to_f64() does not overflow to infinity.
+fn int_root_f64(a: &UBig, n: u32) -> Result<f64, CalcError> {
+    const KEEP_BITS: usize = 1000;
+    let n_us = n as usize;
+    let bits = a.bit_len();
+    let shift = if bits > KEEP_BITS { (bits - KEEP_BITS) / n_us * n_us } else { 0 };
+    let m = (a >> shift).to_f64().value();
+    let scale = 2f64.powi(i32::try_from(shift / n_us).unwrap_or(i32::MAX));
+    let r = float_root(m, n) * scale;
+    if r.is_finite() { Ok(r) } else { Err(CalcError::FloatOverflow) }
 }
 
 // --- Factorial (Peter Luschny's algorithm) ---
@@ -377,6 +482,8 @@ enum CalcError {
     DivisionByZero,
     FactorialDomain(f64),
     ExponentTooLarge(u64),
+    RootDomain(u32),
+    FloatOverflow,
 }
 
 impl fmt::Display for CalcError {
@@ -390,7 +497,17 @@ impl fmt::Display for CalcError {
             Self::DivisionByZero     => write!(f, "division by zero"),
             Self::FactorialDomain(x) => write!(f, "factorial requires non-negative integer, got {x}"),
             Self::ExponentTooLarge(n) => write!(f, "exponent {n} exceeds limit ({MAX_INT_EXP})"),
+            Self::RootDomain(n)       => write!(f, "{} of a negative number is not real", root_name(*n)),
+            Self::FloatOverflow       => write!(f, "result is too large for floating point"),
         }
+    }
+}
+
+fn root_name(n: u32) -> String {
+    match n {
+        2 => "square root".into(),
+        3 => "cube root".into(),
+        _ => format!("{n}th root"),
     }
 }
 
@@ -530,6 +647,76 @@ fn append_to_file(path: &str, expr: &str, result: &str) {
 mod tests {
     use super::*;
     fn evalf(s: &str) -> f64 { eval(s).unwrap().to_float() }
+    fn eval_int(s: &str) -> String {
+        match eval(s).unwrap() {
+            Value::Int(n) => n.to_string(),
+            Value::Float(f) => panic!("{s}: expected exact integer, got float {f}"),
+        }
+    }
+    #[test] fn unicode_operators() {
+        assert_eq!(evalf("6×7"), 42.0);
+        assert_eq!(evalf("6·7"), 42.0);
+        assert_eq!(evalf("6⋅7"), 42.0);
+        assert_eq!(evalf("84÷2"), 42.0);
+        assert_eq!(evalf("50−8"), 42.0);
+        assert_eq!(evalf("−5+3"), -2.0);
+        assert_eq!(evalf("2\u{00A0}+\u{00A0}2"), 4.0); // NBSP
+    }
+    #[test] fn roots_exact() {
+        assert_eq!(eval_int("√16"), "4");
+        assert_eq!(eval_int("∛27"), "3");
+        assert_eq!(eval_int("∜81"), "3");
+        assert_eq!(eval_int("∛-8"), "-2");
+        assert_eq!(eval_int("√(9+16)"), "5");
+        assert_eq!(eval_int("√√16"), "2");
+        // literals go through f64 in calc-cross, so build the big perfect square with ^
+        assert_eq!(eval_int("√(10^200)"), "1".to_string() + &"0".repeat(100));
+    }
+    #[test] fn roots_float() {
+        assert!((evalf("√2") - std::f64::consts::SQRT_2).abs() < 1e-15);
+        assert!((evalf("√2.25") - 1.5).abs() < 1e-15);
+        assert!((evalf("∛-2") + 2f64.cbrt()).abs() < 1e-15);
+        // huge non-perfect square must not overflow through to_f64()
+        let v = evalf("√(10^400+1)");
+        assert!((v / 1e200 - 1.0).abs() < 1e-12);
+    }
+    #[test] fn roots_domain() {
+        assert!(eval("√-4").is_err());
+        assert!(eval("∜-16").is_err());
+        assert!(eval("√-2.5").is_err());
+        assert!(eval("√").is_err());
+    }
+    #[test] fn root_precedence() {
+        assert_eq!(evalf("-√4"), -2.0);
+        assert_eq!(evalf("√4^3"), 8.0);      // (√4)^3
+        assert_eq!(evalf("√4!"), 24f64.sqrt()); // √(4!)
+        assert_eq!(evalf("√9+1"), 4.0);
+    }
+    #[test] fn implicit_multiplication() {
+        assert_eq!(evalf("2√9"), 6.0);
+        assert_eq!(evalf("2(3+4)"), 14.0);
+        assert_eq!(evalf("(1+1)(2+3)"), 10.0);
+        assert_eq!(evalf("6/2√9"), 9.0);  // same precedence as *: (6/2)·3
+        assert_eq!(evalf("-2√4"), -4.0);
+        assert!((evalf("2π") - 2.0 * std::f64::consts::PI).abs() < 1e-15);
+        assert!(eval("2 3").is_err()); // no implicit multiplication between plain numbers
+    }
+    #[test] fn pi() {
+        assert_eq!(evalf("π"), std::f64::consts::PI);
+        assert!((evalf("π×2²") - 4.0 * std::f64::consts::PI).abs() < 1e-12);
+    }
+    #[test] fn superscripts() {
+        assert_eq!(eval_int("3²"), "9");
+        assert_eq!(eval_int("2¹⁰"), "1024");
+        assert_eq!(eval_int("10⁰"), "1");
+        assert_eq!(evalf("2⁻¹"), 0.5);
+        assert_eq!(eval_int("-3²"), "-9");
+        assert_eq!(eval_int("(-3)²"), "9");
+        assert_eq!(eval_int("2^3²"), "512");  // right-assoc: 2^(3²)
+        assert_eq!(eval_int("3!²"), "36");
+        assert_eq!(eval_int("√(3²+4²)"), "5");
+        assert!(eval("2⁻").is_err());
+    }
     #[test] fn basic()    { assert_eq!(evalf("2+2"), 4.0); assert_eq!(evalf("10-3*2"), 4.0); }
     #[test] fn parens()   { assert_eq!(evalf("(1+2)*3"), 9.0); }
     #[test] fn power()    { assert_eq!(evalf("2^10"), 1024.0); assert_eq!(evalf("2^3^2"), 512.0); }
