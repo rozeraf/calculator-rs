@@ -96,6 +96,7 @@ enum Token {
     Plus, Minus, Star, Slash, Percent, Caret, Bang,
     LParen, RParen, Eof,
     Root(u32),   // √ ∛ ∜ — prefix n-th root
+    Func(u32),   // sqrt( cbrt( — n-th root with function-call syntax
     Pi,          // π
     Sup(String), // superscript exponent, e.g. "²" → "2", "⁻¹" → "-1"
 }
@@ -124,6 +125,18 @@ impl Lexer {
     fn skip_ws(&mut self) {
         // is_whitespace also covers NBSP and other Unicode spaces from copy-paste
         while self.peek().is_some_and(char::is_whitespace) { self.advance(); }
+    }
+    // Reads an ASCII name: sqrt, cbrt, pi (case-insensitive).
+    fn read_word(&mut self) -> Result<Token, CalcError> {
+        let start = self.pos;
+        while self.peek().is_some_and(|c| c.is_ascii_alphabetic()) { self.advance(); }
+        let word: String = self.input[start..self.pos].iter().collect();
+        match word.to_ascii_lowercase().as_str() {
+            "sqrt" => Ok(Token::Func(2)),
+            "cbrt" => Ok(Token::Func(3)),
+            "pi"   => Ok(Token::Pi),
+            _      => Err(CalcError::UnknownName(word)),
+        }
     }
     // Reads a superscript exponent: optional '⁻' followed by superscript digits.
     fn read_superscript(&mut self) -> Result<Token, CalcError> {
@@ -171,6 +184,7 @@ impl Lexer {
                     '∛' => { self.advance(); tokens.push(Token::Root(3)); }
                     '∜' => { self.advance(); tokens.push(Token::Root(4)); }
                     'π' => { self.advance(); tokens.push(Token::Pi); }
+                    c if c.is_ascii_alphabetic() => tokens.push(self.read_word()?),
                     c if c == '⁻' || superscript_digit(c).is_some() => tokens.push(self.read_superscript()?),
                     '%' => { self.advance(); tokens.push(Token::Percent); }
                     '^' => { self.advance(); tokens.push(Token::Caret); }
@@ -189,13 +203,15 @@ impl Lexer {
 //
 // expr     = term   ((+ | -)  term)*
 // term     = unary  ((* | / | %) unary | <implicit *> unary)*
-//            implicit multiplication only before √ ∛ ∜ π ( — e.g. 2√3, 3π, 2(1+1)
+//            implicit multiplication only before √ ∛ ∜ π sqrt cbrt pi ( — e.g. 2√3, 3π, 2(1+1)
 // unary    = - unary | power
 // power    = prefix (^ unary)?   right-associative
 // prefix   = (√ | ∛ | ∜) radicand | postfix
 // radicand = - radicand | prefix    so that ∛-8 works
 // postfix  = primary (! | superscript)*
-// primary  = number | π | ( expr )
+// primary  = number | π | pi | (sqrt | cbrt) ( expr ) | ( expr )
+//            sqrt(x)/cbrt(x) take only the parenthesised argument, so sqrt(4)! = 2!,
+//            whereas the prefix √ takes its operand with postfixes: √4! = √(4!)
 
 struct Parser { tokens: Vec<Token>, pos: usize }
 
@@ -232,7 +248,7 @@ impl Parser {
                 Token::Star    => { self.advance(); l = v_mul(l, self.parse_unary()?)?; }
                 Token::Slash   => { self.advance(); l = v_div(l, self.parse_unary()?)?; }
                 Token::Percent => { self.advance(); l = v_rem(l, self.parse_unary()?)?; }
-                Token::Root(_) | Token::Pi | Token::LParen => { l = v_mul(l, self.parse_unary()?)?; }
+                Token::Root(_) | Token::Func(_) | Token::Pi | Token::LParen => { l = v_mul(l, self.parse_unary()?)?; }
                 _ => break,
             }
         }
@@ -286,6 +302,14 @@ impl Parser {
         match self.peek().clone() {
             Token::Number(n) => { self.advance(); Ok(Value::Float(n)) }
             Token::Pi => { self.advance(); Ok(Value::Float(std::f64::consts::PI)) }
+            Token::Func(n) => {
+                self.advance();
+                if self.peek() != &Token::LParen {
+                    return Err(CalcError::Expected("'(' after function name".into(), format!("{:?}", self.peek())));
+                }
+                let arg = self.parse_primary()?; // parses the ( expr ) group
+                v_root(arg, n)
+            }
             Token::LParen => {
                 self.advance();
                 let v = self.parse_expr()?;
@@ -484,6 +508,7 @@ enum CalcError {
     ExponentTooLarge(u64),
     RootDomain(u32),
     FloatOverflow,
+    UnknownName(String),
 }
 
 impl fmt::Display for CalcError {
@@ -499,6 +524,7 @@ impl fmt::Display for CalcError {
             Self::ExponentTooLarge(n) => write!(f, "exponent {n} exceeds limit ({MAX_INT_EXP})"),
             Self::RootDomain(n)       => write!(f, "{} of a negative number is not real", root_name(*n)),
             Self::FloatOverflow       => write!(f, "result is too large for floating point"),
+            Self::UnknownName(w)      => write!(f, "unknown name: {w} (known: sqrt, cbrt, pi)"),
         }
     }
 }
@@ -704,6 +730,23 @@ mod tests {
     #[test] fn pi() {
         assert_eq!(evalf("π"), std::f64::consts::PI);
         assert!((evalf("π×2²") - 4.0 * std::f64::consts::PI).abs() < 1e-12);
+    }
+    #[test] fn ascii_names() {
+        assert_eq!(eval_int("sqrt(16)"), "4");
+        assert_eq!(eval_int("cbrt(-27)"), "-3");
+        assert_eq!(eval_int("SQRT(9+16)"), "5");
+        assert_eq!(eval_int("sqrt(sqrt(16))"), "2");
+        assert_eq!(eval_int("sqrt(4)!"), "2");     // function call: (sqrt 4)!
+        assert_eq!(eval_int("sqrt(4)^3"), "8");
+        assert_eq!(eval_int("sqrt(4)²"), "4");
+        assert_eq!(evalf("2sqrt(9)"), 6.0);
+        assert_eq!(evalf("pi"), std::f64::consts::PI);
+        assert!((evalf("2pi") - 2.0 * std::f64::consts::PI).abs() < 1e-15);
+        assert!((evalf("sqrt(2)") - std::f64::consts::SQRT_2).abs() < 1e-15);
+        assert!(eval("sqrt 4").is_err());   // parentheses are required
+        assert!(eval("sqrt(-4)").is_err());
+        assert!(eval("foo(1)").is_err());
+        assert!(eval("1e3").is_ok());       // exponent notation still lexes as a number
     }
     #[test] fn superscripts() {
         assert_eq!(eval_int("3²"), "9");

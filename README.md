@@ -72,13 +72,14 @@ The calculator operates in two modes:
 | `(...)` | Grouping | `(2 + 2) * 2` |
 | `√` `∛` `∜` | Square / cube / fourth root (exact integer for perfect powers, otherwise `f64`) | `√16`, `∛-8`, `√(3²+4²)` |
 | `²` `³` `⁻¹` … | Superscript exponent (any superscript digits, optional `⁻`) | `5²`, `2¹⁰`, `2⁻¹` |
-| `π` | Pi (as `f64`) | `2π` |
+| `π` / `pi` | Pi (as `f64`) | `2π`, `2pi` |
+| `sqrt(…)` `cbrt(…)` | ASCII function form of `√` and `∛`; parentheses required, names are case-insensitive | `sqrt(16)`, `cbrt(-27)` |
 
 **Unicode aliases:** `×` `·` `⋅` `∙` `∗` work as `*`, `÷` `∕` as `/`, and `−` (U+2212) as `-`. Non-breaking spaces are treated as whitespace, so expressions pasted from documents work as-is.
 
-**Implicit multiplication** works before `√` `∛` `∜` `π` and `(`, with the same precedence as `*`: `2√3`, `3π`, `2(1+1)`, `6/2√9 = 9`. It does not apply between two plain numbers, so `2 3` is an error.
+**Implicit multiplication** works before `√` `∛` `∜` `π`, `sqrt` `cbrt` `pi` and `(`, with the same precedence as `*`: `2√3`, `3π`, `2(1+1)`, `6/2√9 = 9`. It does not apply between two plain numbers, so `2 3` is an error.
 
-**Precedence of roots:** a root applies to the following operand together with its `!` and superscripts, so `√4! = √(4!)` and `√4^3 = (√4)^3`. A leading minus is allowed in the radicand: `∛-8 = -2`, while `√-4` is an error.
+**Precedence of roots:** a root applies to the following operand together with its `!` and superscripts, so `√4! = √(4!)` and `√4^3 = (√4)^3`. A leading minus is allowed in the radicand: `∛-8 = -2`, while `√-4` is an error. The function forms take only their parenthesised argument, so `sqrt(4)! = 2! = 2`.
 
 ### REPL Commands
 
