@@ -1,7 +1,13 @@
 use std::fmt;
 use std::fs::OpenOptions;
 use std::io::Write;
-use rustyline::{DefaultEditor, error::ReadlineError};
+use std::sync::{Arc, Mutex};
+use rustyline::{
+    Cmd, CompletionType, ConditionalEventHandler, Config, Context, Editor, Event, EventContext,
+    EventHandler, Helper, KeyCode, KeyEvent, RepeatCount,
+    completion::Completer, error::ReadlineError, highlight::Highlighter, hint::Hinter,
+    history::DefaultHistory, validate::Validator,
+};
 use dashu::integer::{IBig, UBig};
 use dashu::base::{BitTest, DivRem, UnsignedAbs};
 
@@ -111,12 +117,40 @@ fn superscript_digit(c: char) -> Option<char> {
     }
 }
 
+// Decodes Unicode code points typed as text: U+221A, √, or a bare u221A
+// (what is left in a terminal when the Ctrl+Shift+U input method does not work).
+// Exactly 4 hex digits are taken, so "6u221a59" means 6√59. All supported
+// symbols are in the BMP, so 4 digits are always enough.
+fn decode_escapes(input: &str) -> Vec<char> {
+    let src: Vec<char> = input.chars().collect();
+    let mut out = Vec::with_capacity(src.len());
+    let mut i = 0;
+    while i < src.len() {
+        let hex_start = match (src[i], src.get(i + 1)) {
+            ('\\', Some('u' | 'U')) | ('u' | 'U', Some('+')) => Some(i + 2),
+            ('u' | 'U', _) => Some(i + 1),
+            _ => None,
+        };
+        let decoded = hex_start.and_then(|s| {
+            let hex = src.get(s..s + 4)?;
+            if !hex.iter().all(char::is_ascii_hexdigit) { return None; }
+            let code = u32::from_str_radix(&hex.iter().collect::<String>(), 16).ok()?;
+            char::from_u32(code).map(|c| (c, s + 4))
+        });
+        match decoded {
+            Some((c, next)) => { out.push(c); i = next; }
+            None => { out.push(src[i]); i += 1; }
+        }
+    }
+    out
+}
+
 // --- Lexer ---
 
 struct Lexer { input: Vec<char>, pos: usize }
 
 impl Lexer {
-    fn new(input: &str) -> Self { Self { input: input.chars().collect(), pos: 0 } }
+    fn new(input: &str) -> Self { Self { input: decode_escapes(input), pos: 0 } }
     fn peek(&self) -> Option<char> { self.input.get(self.pos).copied() }
     fn advance(&mut self) -> Option<char> {
         let c = self.input.get(self.pos).copied();
@@ -544,6 +578,81 @@ fn eval(expr: &str) -> Result<Value, CalcError> {
     Parser::new(tokens).parse()
 }
 
+// --- Live code point replacement in the REPL ---
+//
+// While typing, u221a / U+221A / √ turns into √ as soon as the fourth hex digit
+// is typed, like autocorrect in Word. decode_escapes() still handles pasted input
+// and single-expression mode.
+
+/// If typing `c` at the cursor completes a code point escape in `before` (the line up
+/// to the cursor), returns how many chars to delete before the cursor and the char
+/// to insert instead of them.
+fn complete_escape(before: &str, c: char) -> Option<(usize, char)> {
+    if !c.is_ascii_hexdigit() { return None; }
+    let chars: Vec<char> = before.chars().collect();
+    let n = chars.len();
+    if n < 4 { return None; }
+    let hex_tail = &chars[n - 3..];
+    if !hex_tail.iter().all(char::is_ascii_hexdigit) { return None; }
+    let prefix_len = match (n.checked_sub(5).map(|i| chars[i]), chars[n - 4]) {
+        (Some('\\'), 'u' | 'U') | (Some('u' | 'U'), '+') => 2,
+        (_, 'u' | 'U') => 1,
+        _ => return None,
+    };
+    let hex: String = hex_tail.iter().copied().chain(std::iter::once(c)).collect();
+    let ch = char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?;
+    Some((prefix_len + 3, ch))
+}
+
+// rustyline has no single command that deletes N chars and leaves the cursor after the
+// inserted text (Cmd::Replace gets its count reset to 1 for custom bindings and keeps
+// the cursor before the insertion). Completion does exactly that, so the key handler
+// stores the typed hex digit and triggers Cmd::Complete, and ReplHelper::complete
+// replaces the escape with the decoded char. The digit itself is never inserted.
+type PendingKey = Arc<Mutex<Option<char>>>;
+
+struct EscapeHandler { pending: PendingKey }
+
+impl ConditionalEventHandler for EscapeHandler {
+    fn handle(&self, evt: &Event, n: RepeatCount, _: bool, ctx: &EventContext) -> Option<Cmd> {
+        let Some(KeyEvent(KeyCode::Char(c), _)) = evt.get(0) else { return None };
+        if n > 1 { return None; }
+        complete_escape(&ctx.line()[..ctx.pos()], *c)?;
+        *self.pending.lock().ok()? = Some(*c);
+        Some(Cmd::Complete)
+    }
+}
+
+struct ReplHelper { pending: PendingKey }
+
+impl Completer for ReplHelper {
+    type Candidate = String;
+    fn complete(&self, line: &str, pos: usize, _: &Context<'_>) -> rustyline::Result<(usize, Vec<String>)> {
+        let before = &line[..pos];
+        let pending = self.pending.lock().ok().and_then(|mut p| p.take());
+        let found = match pending {
+            // triggered by EscapeHandler: the 4th hex digit is not in the line yet
+            Some(c) => complete_escape(before, c),
+            // Tab: convert an escape that is already fully typed
+            None => {
+                let mut rest = before.chars();
+                rest.next_back()
+                    .and_then(|last| complete_escape(rest.as_str(), last))
+                    .map(|(del, ch)| (del + 1, ch))
+            }
+        };
+        // the escape is pure ASCII, so char count == byte count
+        Ok(match found {
+            Some((del, ch)) => (pos - del, vec![ch.to_string()]),
+            None => (pos, Vec::new()),
+        })
+    }
+}
+impl Hinter for ReplHelper { type Hint = String; }
+impl Highlighter for ReplHelper {}
+impl Validator for ReplHelper {}
+impl Helper for ReplHelper {}
+
 // --- Entry point ---
 
 fn main() {
@@ -564,7 +673,16 @@ fn main() {
     println!("calc - operators: + - * / % ^ ! ()");
     println!("commands: :save <file>  :dump <file>  :full  :digits  :quit / Ctrl-D");
 
-    let mut rl = DefaultEditor::new().expect("failed to init readline");
+    // List mode applies a single completion immediately instead of waiting for another Tab
+    let config = Config::builder().completion_type(CompletionType::List).build();
+    let mut rl: Editor<ReplHelper, DefaultHistory> =
+        Editor::with_config(config).expect("failed to init readline");
+    let pending: PendingKey = Arc::default();
+    rl.set_helper(Some(ReplHelper { pending: Arc::clone(&pending) }));
+    for c in ('0'..='9').chain('a'..='f').chain('A'..='F') {
+        let handler = EscapeHandler { pending: Arc::clone(&pending) };
+        rl.bind_sequence(KeyEvent::from(c), EventHandler::Conditional(Box::new(handler)));
+    }
     let mut log_file: Option<String> = output_file;
     let mut last: Option<Value> = None;
 
@@ -747,6 +865,29 @@ mod tests {
         assert!(eval("sqrt(-4)").is_err());
         assert!(eval("foo(1)").is_err());
         assert!(eval("1e3").is_ok());       // exponent notation still lexes as a number
+    }
+    #[test] fn codepoint_escapes() {
+        assert_eq!(evalf("6u221a9"), 18.0);          // bare form from a failed Ctrl+Shift+U
+        assert_eq!(evalf("6u221a59"), 6.0 * 59f64.sqrt()); // exactly 4 hex digits are taken
+        assert_eq!(evalf("U+221A16"), 4.0);
+        assert_eq!(evalf("\\u221a16"), 4.0);
+        assert_eq!(evalf("2 u00d7 3"), 6.0);         // ×
+        assert_eq!(evalf("u03c0"), std::f64::consts::PI);
+        assert_eq!(evalf("3u00b2"), 9.0);            // ²
+        assert!(eval("u22").is_err());               // too few digits: stays an unknown name
+        assert!(eval("uzzzz").is_err());
+    }
+    #[test] fn live_escape_completion() {
+        // the 4th hex digit is being typed; the rest is already in the line
+        assert_eq!(complete_escape("6u221", 'a'), Some((4, '√')));
+        assert_eq!(complete_escape("U+221", 'A'), Some((5, '√')));
+        assert_eq!(complete_escape("\\u221", 'a'), Some((5, '√')));
+        assert_eq!(complete_escape("2 u00d", '7'), Some((4, '×')));
+        assert_eq!(complete_escape("u22", '1'), None);   // only 3 hex digits so far
+        assert_eq!(complete_escape("1221", 'a'), None);  // no u prefix
+        assert_eq!(complete_escape("u221", 'g'), None);  // not a hex digit
+        assert_eq!(complete_escape("ud80", '0'), None);  // lone surrogate is not a char
+        assert_eq!(complete_escape("", '1'), None);
     }
     #[test] fn superscripts() {
         assert_eq!(eval_int("3²"), "9");

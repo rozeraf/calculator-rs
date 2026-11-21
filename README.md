@@ -77,6 +77,8 @@ The calculator operates in two modes:
 
 **Unicode aliases:** `×` `·` `⋅` `∙` `∗` work as `*`, `÷` `∕` as `/`, and `−` (U+2212) as `-`. Non-breaking spaces are treated as whitespace, so expressions pasted from documents work as-is.
 
+**Typing symbols as code points:** if your terminal does not support `Ctrl+Shift+U`, write the code point as text: `u221a`, `U+221A` or `√` all mean `√`. In the REPL the code is replaced with the symbol as soon as you type the fourth hex digit, like autocorrect in Word: typing `6u221a49` shows `6√49`. Pasted text and single-expression mode are decoded the same way when evaluated, and `Tab` converts a code that is already fully typed. Exactly four hex digits are read, so `6u221a59` is `6√59`. Useful codes: `221a` √, `221b` ∛, `00d7` ×, `00f7` ÷, `03c0` π, `00b2` ², `00b3` ³.
+
 **Implicit multiplication** works before `√` `∛` `∜` `π`, `sqrt` `cbrt` `pi` and `(`, with the same precedence as `*`: `2√3`, `3π`, `2(1+1)`, `6/2√9 = 9`. It does not apply between two plain numbers, so `2 3` is an error.
 
 **Precedence of roots:** a root applies to the following operand together with its `!` and superscripts, so `√4! = √(4!)` and `√4^3 = (√4)^3`. A leading minus is allowed in the radicand: `∛-8 = -2`, while `√-4` is an error. The function forms take only their parenthesised argument, so `sqrt(4)! = 2! = 2`.
